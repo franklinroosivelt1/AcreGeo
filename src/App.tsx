@@ -29,6 +29,36 @@ interface ChatMessage {
   content: string;
 }
 
+const INFO_SENSITIVIDADE: Record<string, {
+  title: string;
+  color: string;
+  isProposed?: boolean;
+  colorClass: string;
+  textClass: string;
+  function: string;
+  reason: string;
+  audit: string;
+}> = {
+  car: {
+    title: "Delimitação Oficial CAR",
+    color: "Verde",
+    colorClass: "bg-emerald-500",
+    textClass: "text-emerald-400 border border-emerald-800/40 bg-emerald-950/20",
+    function: "Mapeia os limites georreferenciados cadastrados na base oficial do Cadastro Ambiental Rural (CAR), definindo a poligonal homologada ou autodeclarada do imóvel.",
+    reason: "O Verde representa a base cadastral padrão e regularidade territorial sob análise de divisa. É a linha divisória oficial onde não há incidência direta de restrições ou embargos ambientais.",
+    audit: "Sinaliza o escopo de atuação do produtor e limite de divisa. Qualquer análise ou sobreposição espacial é calculada dentro ou fora deste contorno cadastrado."
+  },
+  deforestation: {
+    title: "Alertas Consolidados (Embargos, Queimadas / Desmate)",
+    color: "Vermelho / Laranja",
+    colorClass: "bg-red-500",
+    textClass: "text-red-400 border border-red-800/40 bg-red-950/20 animate-pulse",
+    function: "Consolida alertas espaciais ativos em tempo quase real, integrando dados de focos de queimada/calor (sensor MODIS/VIIRS do FIRMS), polígonos de desmatamento recente (sistema DETER/INPE) e bases de embargos vigentes (IMAC/IBAMA).",
+    reason: "O Vermelho e o Laranja representam níveis de risco e alertas críticos de infração socioambiental. Exigem pronta verificação e fiscalização preventiva ou punitiva.",
+    audit: "Aponta irregularidades passíveis de embargo imediato, restrição comercial, suspensão de crédito e multas administrativas severas de acordo com a legislação federal e estadual vigente."
+  }
+};
+
 export default function App() {
   // GMS Input States (Latitude)
   const [latG, setLatG] = useState("09");
@@ -52,6 +82,7 @@ export default function App() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [gisLayer, setGisLayer] = useState<"car" | "app" | "reserva" | "deforestation">("car");
   const [searchLoading, setSearchLoading] = useState(false);
+  const [activeInfoModal, setActiveInfoModal] = useState<string | null>(null);
 
   // Suggested Acre coordinate samples for easy testing
   const SUGERIDAS = [
@@ -116,28 +147,34 @@ export default function App() {
 
   // Initialize leafLet Map once
   useEffect(() => {
-    if (typeof window !== "undefined" && (window as any).L && !mapRef.current) {
+    if (typeof window !== "undefined" && (window as any).L) {
       const L = (window as any).L;
-      // Centered at Acre State center
-      const initialMap = L.map("map-gis-container", { zoomControl: false }).setView([-9.5, -69.5], 7);
       
-      // Google Satellite Hybrid layer (satellite with roads, rivers and labels for clear context)
-      L.tileLayer("https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", {
-        attribution: '&copy; Google Satellite'
-      }).addTo(initialMap);
+      const mapGisEl = document.getElementById("map-gis-container");
+      if (mapGisEl && !mapRef.current) {
+        // Centered at Acre State center
+        const initialMap = L.map("map-gis-container", { zoomControl: false }).setView([-9.5, -69.5], 7);
+        
+        // Google Satellite Hybrid layer (satellite with roads, rivers and labels for clear context)
+        L.tileLayer("https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", {
+          attribution: '&copy; Google Satellite'
+        }).addTo(initialMap);
 
-      L.control.zoom({ position: "bottomright" }).addTo(initialMap);
-      mapRef.current = initialMap;
+        L.control.zoom({ position: "bottomright" }).addTo(initialMap);
+        mapRef.current = initialMap;
+      }
 
-      // Inicializa também o mapa preview da barra lateral
-      const initialPreviewMap = L.map("map-preview-container", { zoomControl: false }).setView([-9.9740, -67.8100], 12);
-      
-      L.tileLayer("https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", {
-        attribution: '&copy; Google Satellite'
-      }).addTo(initialPreviewMap);
+      if (!mapPreviewRef.current) {
+        // Inicializa também o mapa preview da barra lateral
+        const initialPreviewMap = L.map("map-preview-container", { zoomControl: false }).setView([-9.9740, -67.8100], 12);
+        
+        L.tileLayer("https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", {
+          attribution: '&copy; Google Satellite'
+        }).addTo(initialPreviewMap);
 
-      L.control.zoom({ position: "bottomright" }).addTo(initialPreviewMap);
-      mapPreviewRef.current = initialPreviewMap;
+        L.control.zoom({ position: "bottomright" }).addTo(initialPreviewMap);
+        mapPreviewRef.current = initialPreviewMap;
+      }
 
       // Executa busca inicial padrão na Fazenda Esperança
       handleSearchInternal(-9.9740, -67.8100);
@@ -796,72 +833,165 @@ export default function App() {
           </div>
 
           {/* GIS Thematic Layer Controller */}
-          <div className="p-4">
+          <div className="p-4 border-b border-zinc-800">
             <h3 className="text-xs font-mono text-zinc-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5 text-zinc-500" />
               Temáticas de Sensitividade Geográfica
             </h3>
-            <div className="space-y-1 select-none">
-              <label 
-                onClick={() => setGisLayer("car")}
-                className={`flex items-center justify-between p-2 rounded text-xs cursor-pointer border ${
+            
+            {/* Active Layers with Interactive Map Controls */}
+            <div className="space-y-1.5 select-none mb-4">
+              <span className="text-[10px] font-mono text-zinc-500 block mb-1">Visualização Temática no Mapa:</span>
+              
+              {/* CAR layer */}
+              <div 
+                className={`flex items-center justify-between p-2 rounded text-xs border transition ${
                   gisLayer === "car" 
-                    ? "bg-emerald-950/45 border-emerald-800/60 text-emerald-300" 
+                    ? "bg-emerald-950/45 border-emerald-800/60 text-emerald-300 shadow-sm" 
                     : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-900/40"
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-emerald-500"></div>
-                  <span>Delimitação Oficial CAR</span>
+                <div 
+                  onClick={() => setGisLayer("car")}
+                  className="flex items-center gap-2 flex-grow cursor-pointer animate-fade-in"
+                >
+                  <div className="w-3 h-3 rounded bg-emerald-500 flex-shrink-0"></div>
+                  <span className="font-medium">Delimitação CAR</span>
                 </div>
-                <span className="text-[9px] font-mono text-zinc-500">{gisLayer === "car" ? "Ativa" : ""}</span>
-              </label>
-
-              <label 
-                onClick={() => setGisLayer("app")}
-                className={`flex items-center justify-between p-2 rounded text-xs cursor-pointer border ${
-                  gisLayer === "app" 
-                    ? "bg-blue-950/45 border-blue-800/60 text-blue-300" 
-                    : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-900/40"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-blue-500"></div>
-                  <span>Preservação Correntes APP</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-mono text-emerald-500">{gisLayer === "car" ? "Ativo" : ""}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveInfoModal("car");
+                    }}
+                    className="p-1 text-zinc-500 hover:text-white transition rounded hover:bg-zinc-800/60"
+                    title="Ver justificativa e cor"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-emerald-400" />
+                  </button>
                 </div>
-                <span className="text-[9px] font-mono text-zinc-500">{gisLayer === "app" ? "Ativa" : ""}</span>
-              </label>
+              </div>
 
-              <label 
-                onClick={() => setGisLayer("reserva")}
-                className={`flex items-center justify-between p-2 rounded text-xs cursor-pointer border ${
-                  gisLayer === "reserva" 
-                    ? "bg-orange-950/45 border-orange-850/60 text-orange-300" 
-                    : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-900/40"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-orange-500"></div>
-                  <span>Percentual Reserva Legal (20% AMZ)</span>
-                </div>
-                <span className="text-[9px] font-mono text-zinc-500">{gisLayer === "reserva" ? "Ativa" : ""}</span>
-              </label>
-
-              <label 
-                onClick={() => setGisLayer("deforestation")}
-                className={`flex items-center justify-between p-2 rounded text-xs cursor-pointer border ${
+              {/* Alertas selection mapped to deforestation */}
+              <div 
+                className={`flex items-center justify-between p-2 rounded text-xs border transition ${
                   gisLayer === "deforestation" 
-                    ? "bg-red-950/45 border-red-800/60 text-red-300" 
+                    ? "bg-red-950/45 border-red-800/60 text-red-300 shadow-sm" 
                     : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-900/40"
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-red-500 animate-pulse"></div>
-                  <span>Alertas Satélites desmatamento</span>
+                <div 
+                  onClick={() => setGisLayer("deforestation")}
+                  className="flex items-center gap-2 flex-grow cursor-pointer animate-fade-in"
+                >
+                  <div className="w-3 h-3 rounded bg-red-500 animate-pulse flex-shrink-0"></div>
+                  <span className="font-medium">Camada de Alertas</span>
                 </div>
-                <span className="text-[9px] font-mono text-red-400">{gisLayer === "deforestation" ? "Deter+" : ""}</span>
-              </label>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-mono text-red-400">{gisLayer === "deforestation" ? "Deter+" : ""}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveInfoModal("deforestation");
+                    }}
+                    className="p-1 text-zinc-500 hover:text-white transition rounded hover:bg-zinc-800/60"
+                    title="Ver justificativa e cor"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-red-400" />
+                  </button>
+                </div>
+              </div>
             </div>
+
+            {/* Dynamic Alarm Block */}
+            <div className="space-y-2 pt-3 border-t border-zinc-800/55">
+              <span className="text-[10px] font-mono text-zinc-500 block mb-1 uppercase tracking-wider font-bold">🔔 Notificações e Alertas Ativos:</span>
+              
+              {!foundProperty ? (
+                <div className="p-3 bg-zinc-900/20 border border-zinc-850 rounded text-[11px] text-zinc-500 font-sans text-center">
+                  Consulte um imóvel rústico para mapear os alertas nesta poligonal...
+                </div>
+              ) : (
+                (() => {
+                  const alerts: { tipo: string; badge: string; desc: string; isCrit: boolean }[] = [];
+                  
+                  // Desmate alert
+                  if (foundProperty.status_ambiental === "Embargado" || foundProperty.detalhes_deforestacao) {
+                    alerts.push({
+                      tipo: "Desmate / Desmatamento",
+                      badge: "DETER+ (INPE)",
+                      desc: foundProperty.detalhes_deforestacao || "Supressão recente de cobertura vegetal nativa detectada por sensores de satélite.",
+                      isCrit: true
+                    });
+                  }
+
+                  // Embargo alert
+                  if (foundProperty.status_ambiental === "Embargado") {
+                    alerts.push({
+                      tipo: "Embargo Cadastral",
+                      badge: "IMAC / IBAMA",
+                      desc: "Imóvel rural devedor de passivos ecológicos sob interdição administrativa devido a infrações recorrentes contra a flora.",
+                      isCrit: true
+                    });
+                  }
+
+                  // Queimadas alert
+                  const containsFire = foundProperty.status_ambiental === "Sob Análise" || (foundProperty.status_ambiental === "Embargado" && foundProperty.area_ha > 300);
+                  if (containsFire) {
+                    alerts.push({
+                      tipo: "Foco de Calor / Queimada",
+                      badge: "FIRMS (VIIRS)",
+                      desc: "Focos de calor ativos com alta anomalia térmica detectados no interior do imóvel nas últimas 48 horas.",
+                      isCrit: false
+                    });
+                  }
+
+                  if (alerts.length === 0) {
+                    return (
+                      <div className="p-3 bg-emerald-950/20 border border-emerald-900/30 text-emerald-400 rounded-lg text-xs flex flex-col gap-1">
+                        <span className="font-bold flex items-center gap-1.5 uppercase tracking-wider text-[10px] text-emerald-300">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                          Ambiente Conforme
+                        </span>
+                        <p className="text-[10px] text-zinc-400 font-sans">Sem notificações ativas de embargo, queimada ou desmatamento registradas nos sistemas oficiais.</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-2">
+                      {alerts.map((al, idx) => (
+                        <div 
+                          key={idx} 
+                          className={`p-2.5 rounded-lg border text-xs leading-normal flex flex-col gap-1 transition-all ${
+                            al.isCrit 
+                              ? "bg-red-950/20 border-red-900/40 text-red-200" 
+                              : "bg-orange-950/20 border-orange-900/40 text-orange-200"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="font-bold flex items-center gap-1 uppercase text-[10px] tracking-wide text-white">
+                              <AlertTriangle className={`w-3.5 h-3.5 ${al.isCrit ? "text-red-400" : "text-orange-400"}`} />
+                              {al.tipo}
+                            </span>
+                            <span className={`text-[8px] font-mono font-black uppercase px-1.5 py-0.5 rounded border ${
+                              al.isCrit 
+                                ? "bg-red-900/40 text-red-400 border-red-700/50" 
+                                : "bg-orange-900/40 text-orange-400 border-orange-700/50"
+                            }`}>
+                              {al.badge}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-zinc-300 font-sans">{al.desc}</p>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+
           </div>
 
         </section>
@@ -881,6 +1011,16 @@ export default function App() {
                 <Compass className="w-4 h-4" />
                 Painel Consolidado (GIS)
               </button>
+
+              <button 
+                onClick={() => setActiveTab("report")}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                  activeTab === "report" ? "bg-zinc-800 text-emerald-400 font-semibold border border-zinc-700" : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                Parecer Técnico (Laudo)
+              </button>
               
               <button 
                 onClick={() => setActiveTab("chat")}
@@ -895,16 +1035,6 @@ export default function App() {
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                 </span>
               </button>
-
-              <button 
-                onClick={() => setActiveTab("report")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                  activeTab === "report" ? "bg-zinc-800 text-emerald-400 font-semibold border border-zinc-700" : "text-zinc-400 hover:text-white"
-                }`}
-              >
-                <FileText className="w-4 h-4" />
-                Parecer Técnico (Laudo)
-              </button>
             </div>
 
             <div className="hidden sm:flex items-center">
@@ -914,53 +1044,34 @@ export default function App() {
 
           {/* TAB 1: DASHBOARD CONSOLIDADO */}
           {activeTab === "dashboard" && (
-            <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden h-full">
+            <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-6 bg-zinc-900/20 h-full">
               
-              {/* Map GIS Canvas */}
-              <div className="md:col-span-7 relative bg-zinc-950 border-r border-zinc-800 flex flex-col h-[350px] md:h-full">
-                
-                {/* Layer Map Status Indicator */}
-                <div className="absolute top-4 left-4 z-10 flex flex-col gap-1.5 pointer-events-none">
-                  <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 py-1.5 px-3 rounded shadow text-[10px] font-mono backdrop-blur">
-                    <span className="w-2 h-2 rounded bg-emerald-500"></span>
-                    <span className="text-zinc-300 font-semibold">GOOGLE SATELLITE HYBRID</span>
-                  </div>
-                  {foundProperty && (
-                    <div className="flex items-center gap-2 bg-zinc-900/95 border border-zinc-800 py-1 px-3 rounded shadow text-[10px] font-mono backdrop-blur text-zinc-400">
-                      <span>Proximidade:</span>
-                      <span className="text-emerald-400 font-bold">{foundProperty.municipio}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Satellite deforest alarm if active view is defor and land is embargado */}
-                {gisLayer === "deforestation" && foundProperty && foundProperty.status_ambiental === "Embargado" && (
-                  <div className="absolute top-4 right-4 z-10 bg-red-950 border border-red-800 text-red-400 animate-pulse text-[10px] uppercase font-mono py-1.5 px-3 rounded shadow font-bold flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 animate-bounce-slow" />
-                    Foco Deter Detectado
-                  </div>
-                )}
-
-                {/* Map element placeholder (Will mount Leaflet here) */}
-                <div id="map-gis-container" className="w-full flex-1 z-0"></div>
-
-                {/* Map Bottom HUD Warning Panel */}
-                {searchError && (
-                  <div className="absolute bottom-4 left-4 right-4 z-10 p-3 bg-red-950/95 border border-red-800 text-red-200 text-xs rounded-lg shadow-lg flex items-start gap-2 backdrop-blur">
-                    <AlertTriangle className="w-4 h-4 mt-0.5 text-red-400 flex-shrink-0" />
+              {/* Top Warning Banner if Satellite alert is chosen and property is Embargada */}
+              {gisLayer === "deforestation" && foundProperty && foundProperty.status_ambiental === "Embargado" && (
+                <div className="p-3 bg-red-955/20 border border-red-900/40 text-red-200 text-xs rounded-lg shadow-md flex items-center justify-between gap-3 animate-pulse">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-400" />
                     <div>
-                      <p className="font-semibold text-red-400">Limite de Cobertura Cartográfica</p>
-                      <p className="text-zinc-300">{searchError}</p>
+                      <span className="font-bold block uppercase text-[10px] tracking-wider text-red-400">🚨 FOCO DE INTERVENÇÃO DETECTADO (DETER+)</span>
+                      <span className="text-[11px] font-sans">Alerta de desmatamento recente na área do imóvel rural sob fiscalização.</span>
                     </div>
                   </div>
-                )}
-              </div>
+                  <span className="text-[9px] font-mono bg-red-900/50 px-2 py-0.5 rounded font-black border border-red-700">Deter+</span>
+                </div>
+              )}
 
-              {/* Right Data HUD - Metadata of property under verification */}
-              <div className="md:col-span-5 p-4 md:p-6 overflow-y-auto space-y-6 bg-zinc-900/20 h-full">
-                
-                {foundProperty ? (
-                  <div className="space-y-6">
+              {searchError && (
+                <div className="p-4 bg-red-950/25 border border-red-800 text-red-250 text-xs rounded-lg shadow flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 text-red-500 flex-shrink-0 animate-pulse" />
+                  <div>
+                    <p className="font-bold text-red-400">Aviso Geográfico / Limite de Cobertura</p>
+                    <p className="text-zinc-300 font-sans mt-0.5">{searchError}</p>
+                  </div>
+                </div>
+              )}
+
+              {foundProperty ? (
+                <div className="space-y-6">
                     
                     {/* Property header header and quick status */}
                     <div className="pb-4 border-b border-zinc-800 flex items-start justify-between gap-2">
@@ -1133,9 +1244,6 @@ export default function App() {
                     </div>
                   </div>
                 )}
-
-              </div>
-
             </div>
           )}
 
@@ -1488,6 +1596,76 @@ export default function App() {
           <span className="text-[10px] text-emerald-500 font-medium bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-900/40">MÁSCARA ATIVA</span>
         </div>
       </footer>
+
+      {/* 5. FLOATING SENSITIVITY INFO MODAL OVERLAY */}
+      {activeInfoModal && INFO_SENSITIVIDADE[activeInfoModal] && (
+        <div 
+          onClick={() => setActiveInfoModal(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/85 backdrop-blur-sm no-print"
+        >
+          <div 
+            className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl animate-fade-in text-zinc-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="p-5 border-b border-zinc-800 flex items-center justify-between gap-4 bg-zinc-950/40">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-3.5 h-3.5 rounded-full ${INFO_SENSITIVIDADE[activeInfoModal].colorClass}`} />
+                <div>
+                  <h3 className="text-sm font-display font-bold text-white leading-none mb-1.5">{INFO_SENSITIVIDADE[activeInfoModal].title}</h3>
+                  <span className={`text-[10px] uppercase font-mono font-black px-2 py-0.5 rounded ${INFO_SENSITIVIDADE[activeInfoModal].textClass}`}>
+                    Cor de Destaque: {INFO_SENSITIVIDADE[activeInfoModal].color}
+                  </span>
+                </div>
+              </div>
+              <button 
+                onClick={() => setActiveInfoModal(null)}
+                className="text-zinc-400 hover:text-white transition px-2 py-1 bg-zinc-950 hover:bg-zinc-800 rounded border border-zinc-800 font-mono text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-4 text-xs leading-relaxed bg-zinc-900">
+              <div className="space-y-1">
+                <span className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase block">1. O que monitora / Funcionalidade:</span>
+                <p className="text-zinc-200 font-sans text-xs bg-zinc-950/50 p-2.5 rounded border border-zinc-850">{INFO_SENSITIVIDADE[activeInfoModal].function}</p>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase block">2. Motivo da Cor ({INFO_SENSITIVIDADE[activeInfoModal].color}):</span>
+                <p className="text-zinc-200 font-sans text-xs bg-zinc-950/50 p-2.5 rounded border border-zinc-850">{INFO_SENSITIVIDADE[activeInfoModal].reason}</p>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-mono tracking-wider text-zinc-500 uppercase block">3. Relevância para a Auditoria Ambiental:</span>
+                <p className="text-zinc-250 font-sans text-xs bg-emerald-950/10 p-2.5 rounded border border-emerald-950/30 text-emerald-300">{INFO_SENSITIVIDADE[activeInfoModal].audit}</p>
+              </div>
+
+              {INFO_SENSITIVIDADE[activeInfoModal].isProposed && (
+                <div className="p-3 bg-zinc-950 border border-zinc-850 text-zinc-300 rounded-lg flex items-center gap-2.5 mt-2">
+                  <Shield className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                  <div>
+                    <strong className="block text-[11px] uppercase text-emerald-400">Camada Analítica de Expansão (Acre)</strong>
+                    <p className="text-[10px] text-zinc-500 leading-normal">Esta camada é proposta como solução avançada para as demandas ecológicas fundamentadas do estado do Acre.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer Close */}
+            <div className="px-6 py-4 bg-zinc-950 border-t border-zinc-800 flex justify-end">
+              <button
+                onClick={() => setActiveInfoModal(null)}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-750 transition text-zinc-200 hover:text-white font-medium text-xs rounded border border-zinc-700 font-sans shadow"
+              >
+                Fechar Painel de Ajuda
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
