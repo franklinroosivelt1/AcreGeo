@@ -1,0 +1,6 @@
+{
+  "name": "AcreGeo-Fiscal AI",
+  "description": "Aplicativo para fiscalização ambiental no Acre. Insira coordenadas em GMS ou Decimal para vasculhar e emitir relatórios técnicos do CAR e SIGEF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
